@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.env
+firebase-adminsdk-*.json
+dataset/complete_set
+.github/
+.git/
+model/MODEL.ipynb
