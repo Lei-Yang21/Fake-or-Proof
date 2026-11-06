@@ -1,0 +1,13 @@
+[server]
+headless = true
+maxUploadSize = 5
+maxMessageSize = 10
+enableXsrfProtection = true
+enableCORS = true
+fileWatcherType = "none"
+
+[browser]
+gatherUsageStats = false
+
+[client]
+showErrorDetails = "none"

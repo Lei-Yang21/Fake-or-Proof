@@ -1,0 +1,67 @@
+name: Project checks
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_call: {}
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned dependency manager
+        run: python -m pip install uv==0.13.7
+      - name: Install all test dependencies from the lock
+        run: uv sync --locked --group test --group pipeline
+      - name: Check all application and pipeline behavior
+        run: uv run --no-sync python -m pytest -q
+      - name: Audit every version in the lock
+        run: uv run --no-sync python .github/scripts/audit_lock.py
+
+  containers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build the Cloud Run application
+        run: docker build --pull -t fake-or-proof:test .
+      - name: Verify inference and GradCAM with no network
+        run: >-
+          docker run --rm --network none -e PYTHONPATH=/app
+          --mount type=bind,source=${{ github.workspace }}/.github/scripts/check_container.py,target=/checks/check_container.py,readonly
+          fake-or-proof:test /app/.venv/bin/python /checks/check_container.py
+      - name: Verify non-root application user
+        run: test "$(docker run --rm --network none fake-or-proof:test id -u)" = 10001
+      - name: Scan the application image for fixable high/critical vulnerabilities
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          version: v0.76.2
+          image-ref: fake-or-proof:test
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Build the pipeline runtime with shared model code
+        run: docker build --pull -f pipeline/Dockerfile -t fake-or-proof-pipeline:test .
+      - name: Verify the pipeline runtime without network
+        run: docker run --rm --network none fake-or-proof-pipeline:test python -c "import kfp; from fake_or_proof.model import build_network; assert build_network().classifier[1].out_features == 2"
+      - name: Scan the pipeline image for fixable high/critical vulnerabilities
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          version: v0.76.2
+          image-ref: fake-or-proof-pipeline:test
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"

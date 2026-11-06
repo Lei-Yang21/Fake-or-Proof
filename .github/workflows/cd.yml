@@ -1,0 +1,177 @@
+name: Deploy Streamlit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app.py"
+      - "fake_or_proof/**"
+      - ".streamlit/**"
+      - "modeling/fake_or_proof_model.pth"
+      - "modeling/model_manifest.json"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "Dockerfile"
+      - ".dockerignore"
+      - ".github/tests/**"
+      - ".github/scripts/**"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/cd.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# Serialize releases so an older commit cannot overtake a newer deployment.
+concurrency:
+  group: deploy-streamlit-main
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: checks
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      ARTIFACT_REPOSITORY: ${{ vars.GCP_ARTIFACT_REPOSITORY }}
+      SERVICE: ${{ vars.GCP_CLOUD_RUN_SERVICE }}
+      RUNTIME_SERVICE_ACCOUNT: ${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}
+      WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      DEPLOY_SERVICE_ACCOUNT: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      MODEL_URI: ${{ vars.FOP_MODEL_URI || 'bundled' }}
+      MODEL_SHA256: ${{ vars.FOP_MODEL_SHA256 }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Check deployment configuration
+        id: config
+        shell: bash
+        run: |
+          missing=0
+          require_setting() {
+            if [[ -z "${!1}" ]]; then
+              echo "::error::Missing $2: $3. See .github/DEPLOYMENT.md."
+              missing=1
+            fi
+          }
+          require_setting PROJECT_ID variable GCP_PROJECT_ID
+          require_setting REGION variable GCP_REGION
+          require_setting ARTIFACT_REPOSITORY variable GCP_ARTIFACT_REPOSITORY
+          require_setting SERVICE variable GCP_CLOUD_RUN_SERVICE
+          require_setting RUNTIME_SERVICE_ACCOUNT variable GCP_RUNTIME_SERVICE_ACCOUNT
+          require_setting WORKLOAD_IDENTITY_PROVIDER secret GCP_WORKLOAD_IDENTITY_PROVIDER
+          require_setting DEPLOY_SERVICE_ACCOUNT secret GCP_DEPLOY_SERVICE_ACCOUNT
+          if [[ "$missing" -ne 0 ]]; then exit 1; fi
+
+          # Validate resource identifiers before using them in outputs or CLI flags.
+          [[ "$PROJECT_ID" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]] || { echo "::error::Invalid GCP_PROJECT_ID format."; exit 1; }
+          [[ "$REGION" =~ ^[a-z]+(-[a-z0-9]+)+$ ]] || { echo "::error::Invalid GCP_REGION format."; exit 1; }
+          [[ "$ARTIFACT_REPOSITORY" =~ ^[a-z][a-z0-9-]*$ ]] || { echo "::error::Invalid GCP_ARTIFACT_REPOSITORY format."; exit 1; }
+          [[ "$SERVICE" =~ ^[a-z][a-z0-9-]*[a-z0-9]$ ]] || { echo "::error::Invalid GCP_CLOUD_RUN_SERVICE format."; exit 1; }
+          [[ "$RUNTIME_SERVICE_ACCOUNT" =~ ^[a-z0-9-]+@[a-z0-9.-]+\.iam\.gserviceaccount\.com$ ]] || { echo "::error::Invalid GCP_RUNTIME_SERVICE_ACCOUNT format."; exit 1; }
+          if [[ "$MODEL_URI" != "bundled" ]]; then
+            [[ "$MODEL_URI" =~ ^gs://[a-z0-9][a-z0-9._-]+/[A-Za-z0-9._/-]+$ ]] || { echo "::error::FOP_MODEL_URI must be bundled or a GCS object URI."; exit 1; }
+            [[ "$MODEL_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || { echo "::error::A GCS model requires FOP_MODEL_SHA256."; exit 1; }
+          elif [[ -n "$MODEL_SHA256" ]]; then
+            [[ "$MODEL_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || { echo "::error::Invalid FOP_MODEL_SHA256."; exit 1; }
+          fi
+
+          printf 'registry_host=%s-docker.pkg.dev\n' "$REGION" >> "$GITHUB_OUTPUT"
+          printf 'image_name=%s-docker.pkg.dev/%s/%s/streamlit\n' "$REGION" "$PROJECT_ID" "$ARTIFACT_REPOSITORY" >> "$GITHUB_OUTPUT"
+
+      # Build before authentication; the build does not need Google credentials.
+      - name: Build the Streamlit image
+        env:
+          IMAGE_NAME: ${{ steps.config.outputs.image_name }}
+        run: docker build --pull --tag "$IMAGE_NAME:$GITHUB_SHA" .
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Configure Docker authentication
+        env:
+          REGISTRY_HOST: ${{ steps.config.outputs.registry_host }}
+        run: gcloud auth configure-docker "$REGISTRY_HOST" --quiet
+
+      - name: Push the commit image
+        env:
+          IMAGE_NAME: ${{ steps.config.outputs.image_name }}
+        run: docker push "$IMAGE_NAME:$GITHUB_SHA"
+
+      - name: Deploy the existing Streamlit service
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@2028e2d7d30a78c6910e0632e48dd561b064884d # v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          service: ${{ env.SERVICE }}
+          region: ${{ env.REGION }}
+          image: ${{ steps.config.outputs.image_name }}:${{ github.sha }}
+          revision_traffic: LATEST=100
+          env_vars: |
+            FOP_MODEL_URI=${{ env.MODEL_URI }}
+            FOP_MODEL_SHA256=${{ env.MODEL_SHA256 }}
+            FOP_MAX_UPLOAD_MB=5
+          flags: >-
+            --service-account=${{ env.RUNTIME_SERVICE_ACCOUNT }}
+            --port=8080
+            --memory=2Gi
+            --cpu=1
+            --max-instances=1
+            --concurrency=4
+            --timeout=300
+
+      - name: Authenticate the Cloud Run health check
+        id: health_auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ steps.deploy.outputs.url }}
+          id_token_include_email: true
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Check the deployed Streamlit server
+        env:
+          SERVICE_URL: ${{ steps.deploy.outputs.url }}
+          HEALTH_CHECK_ID_TOKEN: ${{ steps.health_auth.outputs.id_token }}
+        shell: bash
+        run: |
+          if [[ -z "$HEALTH_CHECK_ID_TOKEN" ]]; then
+            echo "::error::Missing identity token for the Cloud Run health check."
+            exit 1
+          fi
+          curl --fail --silent --show-error \
+            --connect-timeout 10 --max-time 30 \
+            --retry 5 --retry-delay 2 --retry-connrefused \
+            --header "Authorization: Bearer $HEALTH_CHECK_ID_TOKEN" \
+            "$SERVICE_URL/_stcore/health"
+
+      - name: Record the deployment URL
+        env:
+          SERVICE_URL: ${{ steps.deploy.outputs.url }}
+          IMAGE_NAME: ${{ steps.config.outputs.image_name }}
+        run: |
+          echo "Streamlit deployment: $SERVICE_URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "Image: $IMAGE_NAME:$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"

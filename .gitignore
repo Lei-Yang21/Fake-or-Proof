@@ -1,3 +1,16 @@
 /dataset/complete_set
 /EDA/figures
-/.github
+*.pyc
+__pycache__/
+.pytest_cache/
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+serviceAccount.json
+firebase-adminsdk-*.json
+gha-creds-*.json
+/pipeline/build/
+.uv-cache/
+/modeling/notebook_candidate.pth

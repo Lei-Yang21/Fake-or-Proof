@@ -1,0 +1,10 @@
+{
+  "format_version": 1,
+  "architecture": "mobilenet_v2",
+  "class_labels": [
+    "AI Generated Image",
+    "Real Image"
+  ],
+  "sha256": "2f048c7fff33d0781150978ceb7d5735d9bf88a0ba23f7fe90f2edc62b560939",
+  "migrated_from_sha256": "76d349d66a59fdecf812215829772220d9c60eba8e90c114a937d40d545c99e1"
+}

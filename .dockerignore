@@ -1,11 +1,15 @@
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-venv/
-.env
-firebase-adminsdk-*.json
-dataset/complete_set
-.github/
-.git/
-model/MODEL.ipynb
+# Runtime source and the verified bundled model only. No credentials/notebooks.
+**
+!Dockerfile
+!pyproject.toml
+!uv.lock
+!app.py
+!fake_or_proof/
+!fake_or_proof/*.py
+!.streamlit/
+!.streamlit/config.toml
+!modeling/
+!modeling/fake_or_proof_model.pth
+!modeling/model_manifest.json
+!pipeline/
+!pipeline/Dockerfile
