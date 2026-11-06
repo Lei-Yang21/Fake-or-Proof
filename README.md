@@ -2,7 +2,15 @@
 
 Image classification application deployed on **Google Cloud Run**, with a **Vertex AI** training pipeline. MobileNetV2 estimates whether an image is AI-generated or real; GradCAM can illustrate its influential regions. A prediction is not proof of authenticity.
 
+**Application:** [Open Fake-or-Proof](https://fakeorproof-streamlit-ffck35mifa-ew.a.run.app).
+
 This repository targets cloud deployment. Runtime code is in `fake_or_proof/`, the Streamlit interface is in `app.py`, and automated checks and their fixtures are grouped under `.github/`. The example images in `dataset/subset/` are retained as dataset resources and excluded from runtime images. Local launch scripts and bootstrap benchmarks are not included.
+
+## Dataset
+
+Dataset reference: [AI-generated images vs real images](https://www.kaggle.com/datasets/tristanzhang32/ai-generated-images-vs-real-images), published on Kaggle by Tristan Zhang (`tristanzhang32`).
+
+The Kaggle dataset page lists the dataset under the [MIT License](https://opensource.org/license/mit). The example images in `dataset/subset/` retain the dataset's original licensing terms. Preserve the upstream copyright and license notices when redistributing these images.
 
 ## Deploy to Cloud Run
 
@@ -50,12 +58,21 @@ Session/media lifetimes are managed by Streamlit. This application does not prov
 
 GitHub Actions runs Linux application/pipeline tests, two-session isolation checks, image-validation and artifact-integrity checks, restricted deserialization, concurrency and GradCAM cleanup tests. It builds both images, validates runtime inference without network access and scans for fixable high/critical image vulnerabilities. The entire dependency lock is audited against public advisories.
 
-Tests and CI utilities live in `.github/tests/` and `.github/scripts/`; they are excluded from production images. Test cloud access is simulated and never starts a billable job. Dependabot prepares weekly updates for Actions, uv and Docker images; updates are not merged automatically.
+Tests and CI utilities live in `.github/tests/` and `.github/scripts/`; they are excluded from production images. Test cloud access is simulated and never starts a billable job.
 
 ## Train in Vertex AI
 
 The training pipeline is separate from application deployment. It persists train/validation/test partitions, trains MobileNetV2, reports test metrics and promotes using validation AUC. Selected models are published under immutable content-addressed object names with a dedicated `published_manifest` output containing the URI/hash.
 
+![Vertex AI pipeline execution showing data ingestion, preprocessing, training and evaluation](pipeline/assets/vertex-ai-pipeline.png)
+
+Example of a successful pipeline execution in Vertex AI.
+
 Follow [pipeline setup](pipeline/README.md) for execution in your Google Cloud project. Project, region, buckets, runtime identity and image digest are explicit configuration; no author's cloud resources are selected by default.
 
 The `EDA/` and modeling notebooks are historical research inputs, and dataset CSV files document training data. They are excluded from both runtime images. Historical HTML templates are not served by Streamlit. This project has no REST prediction API.
+
+## License
+
+The project's source code is licensed under the [MIT License](LICENSE).
+Third-party datasets, images, model weights and dependencies retain their respective licenses.
