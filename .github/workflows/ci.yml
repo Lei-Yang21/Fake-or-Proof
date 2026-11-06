@@ -44,7 +44,7 @@ jobs:
       - name: Verify non-root application user
         run: test "$(docker run --rm --network none fake-or-proof:test id -u)" = 10001
       - name: Scan the application image for fixable high/critical vulnerabilities
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
         with:
           version: v0.76.2
           image-ref: fake-or-proof:test
@@ -57,7 +57,7 @@ jobs:
       - name: Verify the pipeline runtime without network
         run: docker run --rm --network none fake-or-proof-pipeline:test python -c "import kfp; from fake_or_proof.model import build_network; assert build_network().classifier[1].out_features == 2"
       - name: Scan the pipeline image for fixable high/critical vulnerabilities
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
         with:
           version: v0.76.2
           image-ref: fake-or-proof-pipeline:test
